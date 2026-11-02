@@ -25,15 +25,21 @@ const resolveVendor = async (req) => {
   const explicitId = req.query.vendorId || req.body?.vendorId || req.params?.vendorId;
   if (explicitId && mongoose.Types.ObjectId.isValid(explicitId)) {
     vendor = await Vendor.findById(explicitId);
+    if (!vendor) {
+      vendor = await Vendor.findOne({ userId: explicitId });
+    }
   }
 
   // 2. If authenticated user is a vendor
   if (!vendor && req.user) {
     vendor = await Vendor.findOne({ userId: req.user._id });
+    if (!vendor && req.user.role === 'vendor') {
+      vendor = await Vendor.findOne({ businessEmail: req.user.email });
+    }
   }
 
-  // 3. Fallback to first active vendor if none found
-  if (!vendor) {
+  // 3. Fallback to first active vendor ONLY IF user is unauthenticated and no explicitId was supplied
+  if (!vendor && !explicitId && !req.user) {
     vendor = await Vendor.findOne({ status: 'active' });
   }
 
@@ -1061,30 +1067,34 @@ exports.getAllVendors = async (req, res) => {
 exports.getVendorDeliveryPartners = async (req, res) => {
   try {
     const vendor = await resolveVendor(req);
+    if (!vendor) {
+      return res.json({ success: true, deliveryPartners: [] });
+    }
     const DeliveryPartner = require('../models/DeliveryPartner');
 
     // 1. Fetch DeliveryPartner profiles for this specific vendor
     const dpDocs = await DeliveryPartner.find({
       $or: [
-        { vendorId: vendor?._id },
-        { vendorStoreName: vendor?.storeName },
+        { vendorId: vendor._id },
+        { vendorStoreName: vendor.storeName },
       ]
     }).lean();
 
     const dpUserIds = dpDocs.map((d) => d.userId).filter(Boolean);
 
-    // 2. Fetch User accounts created by this vendor or linked to these profiles
-    let partners = await User.find({
+    // 2. Fetch User accounts created by THIS specific vendor or linked to these profiles
+    const partners = await User.find({
+      role: 'delivery_partner',
       $or: [
         { _id: { $in: dpUserIds } },
-        { createdVendorId: vendor?._id },
-        { createdVendorStoreName: vendor?.storeName },
+        { createdVendorId: vendor._id },
+        { createdVendorStoreName: vendor.storeName },
       ]
     }).sort({ createdAt: -1 }).lean();
 
-    // 3. Fallback to platform partners if none created yet
-    if (partners.length === 0) {
-      partners = await User.find({ role: 'delivery_partner' }).limit(4).lean();
+    // Multi-vendor isolation: If vendor has no delivery partners, return empty array (do NOT leak other vendors' partners!)
+    if (!partners || partners.length === 0) {
+      return res.json({ success: true, deliveryPartners: [] });
     }
 
     const dpMap = {};
@@ -1415,35 +1425,52 @@ exports.getVendorFleetLiveLocations = async (req, res) => {
     const DeliveryPartner = require('../models/DeliveryPartner');
 
     const storeLocation = {
-      storeName: vendor?.storeName || 'Balaji Luxe Store',
-      address: `${vendor?.address?.street || 'Palasia Main Road'}, ${vendor?.address?.city || 'Indore'}`,
+      storeName: vendor?.storeName || 'Store Hub',
+      address: `${vendor?.address?.street || 'Main Road'}, ${vendor?.address?.city || 'Indore'}`,
       latitude: vendor?.location?.coordinates?.[1] || 22.7196,
       longitude: vendor?.location?.coordinates?.[0] || 75.8577,
       phone: vendor?.businessPhone || '+91 98260 11223',
     };
 
+    if (!vendor) {
+      return res.json({
+        success: true,
+        storeLocation,
+        riders: [],
+        activeOrdersCount: 0,
+        onlineRidersCount: 0,
+      });
+    }
+
     // 1. Fetch DeliveryPartner profiles for this specific vendor
     const dpDocs = await DeliveryPartner.find({
       $or: [
-        { vendorId: vendor?._id },
-        { vendorStoreName: vendor?.storeName },
+        { vendorId: vendor._id },
+        { vendorStoreName: vendor.storeName },
       ]
     }).lean();
 
     const dpUserIds = dpDocs.map((d) => d.userId).filter(Boolean);
 
-    // 2. Fetch User accounts created by this vendor or linked to these profiles
-    let partners = await User.find({
+    // 2. Fetch User accounts created by THIS specific vendor or linked to these profiles
+    const partners = await User.find({
+      role: 'delivery_partner',
       $or: [
         { _id: { $in: dpUserIds } },
-        { createdVendorId: vendor?._id },
-        { createdVendorStoreName: vendor?.storeName },
+        { createdVendorId: vendor._id },
+        { createdVendorStoreName: vendor.storeName },
       ]
     }).sort({ createdAt: -1 }).lean();
 
-    // 3. Fallback to platform partners if none created yet
-    if (partners.length === 0) {
-      partners = await User.find({ role: 'delivery_partner' }).limit(4).lean();
+    // Multi-vendor isolation: If no delivery boys created yet, return empty riders array (NO fallback to other vendors' riders!)
+    if (!partners || partners.length === 0) {
+      return res.json({
+        success: true,
+        storeLocation,
+        riders: [],
+        activeOrdersCount: 0,
+        onlineRidersCount: 0,
+      });
     }
 
     const dpMap = {};
