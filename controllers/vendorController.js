@@ -1066,6 +1066,11 @@ exports.getAllVendors = async (req, res) => {
 // -----------------------------------------------------------------
 exports.getVendorDeliveryPartners = async (req, res) => {
   try {
+    const explicitId = req.query.vendorId || req.body?.vendorId || req.params?.vendorId;
+    if (!explicitId && (!req.user || req.user.role !== 'vendor')) {
+      return res.json({ success: true, deliveryPartners: [] });
+    }
+
     const vendor = await resolveVendor(req);
     if (!vendor) {
       return res.json({ success: true, deliveryPartners: [] });
@@ -1421,6 +1426,17 @@ exports.assignOrderDeliveryPartner = async (req, res) => {
 // -----------------------------------------------------------------
 exports.getVendorFleetLiveLocations = async (req, res) => {
   try {
+    const explicitId = req.query.vendorId || req.body?.vendorId || req.params?.vendorId;
+    if (!explicitId && (!req.user || req.user.role !== 'vendor')) {
+      return res.json({
+        success: true,
+        storeLocation: { storeName: 'Store Hub', address: 'Indore', latitude: 22.7196, longitude: 75.8577, phone: '+91 98260 11223' },
+        riders: [],
+        activeOrdersCount: 0,
+        onlineRidersCount: 0,
+      });
+    }
+
     const vendor = await resolveVendor(req);
     const DeliveryPartner = require('../models/DeliveryPartner');
 
