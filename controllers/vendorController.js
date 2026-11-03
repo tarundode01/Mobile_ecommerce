@@ -536,7 +536,14 @@ exports.getVendorProducts = async (req, res) => {
     const vendor = await resolveVendor(req);
     if (!vendor) return res.status(404).json({ success: false, message: 'Vendor not found' });
 
-    const products = await Product.find({ vendorId: vendor._id })
+    const vendorIds = [vendor._id, vendor.userId].filter(Boolean);
+    const products = await Product.find({
+      $or: [
+        { vendorId: { $in: vendorIds } },
+        { brand: vendor.storeName }
+      ],
+      isPublished: { $ne: false }
+    })
       .populate('category', 'name slug')
       .sort({ createdAt: -1 })
       .lean();

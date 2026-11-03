@@ -98,6 +98,20 @@ const UserSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
+    vendorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Vendor',
+      index: true
+    },
+    deliveryPartnerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'DeliveryPartner',
+      index: true
+    },
+    partnerCode: {
+      type: String,
+      default: ''
+    },
     addresses: [AddressSchema],
     activeSessions: [SessionSchema],
     resetPasswordToken: String,

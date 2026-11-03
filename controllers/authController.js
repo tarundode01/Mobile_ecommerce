@@ -263,8 +263,45 @@ exports.login = async (req, res) => {
 // @access  Private
 exports.getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('-password');
-    res.json({ success: true, user });
+    const user = await User.findById(req.user._id).select('-password').lean();
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const Vendor = require('../models/Vendor');
+    const DeliveryPartner = require('../models/DeliveryPartner');
+
+    let vendorDoc = null;
+    let deliveryDoc = null;
+
+    if (user.role === 'vendor' || user.vendorId) {
+      vendorDoc = await Vendor.findOne({
+        $or: [
+          ...(user.vendorId ? [{ _id: user.vendorId }] : []),
+          { userId: user._id },
+          { businessEmail: user.email }
+        ]
+      });
+    }
+
+    if (user.role === 'delivery_partner' || user.deliveryPartnerId) {
+      deliveryDoc = await DeliveryPartner.findOne({
+        $or: [
+          ...(user.deliveryPartnerId ? [{ _id: user.deliveryPartnerId }] : []),
+          { userId: user._id },
+          { email: user.email }
+        ]
+      });
+    }
+
+    const userObj = {
+      ...user,
+      id: user._id,
+      vendorId: vendorDoc ? vendorDoc._id : user.vendorId,
+      storeName: vendorDoc ? vendorDoc.storeName : undefined,
+      deliveryPartnerId: deliveryDoc ? deliveryDoc._id : user.deliveryPartnerId,
+      partnerCode: deliveryDoc ? deliveryDoc.partnerCode : user.partnerCode,
+    };
+
+    res.json({ success: true, user: userObj });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

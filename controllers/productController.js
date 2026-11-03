@@ -12,27 +12,27 @@ exports.getHomeFeed = async (req, res) => {
       await Promise.all([
         Banner.find({ isActive: true }).sort({ order: 1 }).limit(5),
         Category.find({ isActive: true }).sort({ order: 1 }).limit(12),
-        Product.find({ isPublished: true, tags: { $in: ['trending', 'marketplace', 'fashion'] } })
+        Product.find({ isPublished: { $ne: false } })
+          .sort({ createdAt: -1 })
+          .populate('category', 'name slug icon')
+          .populate('vendorId', 'storeName rating isVerified')
+          .limit(30),
+        Product.find({ isPublished: { $ne: false }, $or: [{ tags: 'bestseller' }, { rating: { $gte: 4.5 } }] })
           .sort({ createdAt: -1 })
           .populate('category', 'name slug icon')
           .populate('vendorId', 'storeName rating isVerified')
           .limit(20),
-        Product.find({ isPublished: true, tags: 'bestseller' })
+        Product.find({ isPublished: { $ne: false } })
           .sort({ createdAt: -1 })
           .populate('category', 'name slug icon')
           .populate('vendorId', 'storeName rating isVerified')
-          .limit(15),
-        Product.find({ isPublished: true })
-          .sort({ createdAt: -1 })
-          .populate('category', 'name slug icon')
-          .populate('vendorId', 'storeName rating isVerified')
-          .limit(24),
-        Product.find({ isPublished: true, discountPercentage: { $gte: 10 } })
+          .limit(50),
+        Product.find({ isPublished: { $ne: false }, discountPercentage: { $gte: 5 } })
           .sort({ discountPercentage: -1 })
           .populate('category', 'name slug icon')
           .populate('vendorId', 'storeName rating isVerified')
-          .limit(15),
-        Vendor.find({ status: 'active', isVerified: true }).limit(10)
+          .limit(20),
+        Vendor.find({ status: 'active' }).limit(15)
       ]);
 
     res.json({
@@ -74,7 +74,7 @@ exports.getProducts = async (req, res) => {
       limit = 50
     } = req.query;
 
-    const query = { isPublished: true };
+    const query = { isPublished: { $ne: false } };
 
     // 1. Vendor Filter
     const targetVendor = vendorId || vendor;
