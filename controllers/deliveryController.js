@@ -601,3 +601,35 @@ exports.updateProfile = async (req, res) => {
   }
 };
 
+// @desc    Update Delivery Partner Live GPS Location
+// @route   PUT /api/delivery/location
+// @access  Private (delivery_partner)
+exports.updateLiveLocation = async (req, res) => {
+  try {
+    const partner = await getOrCreatePartnerProfile(req.user);
+    const { latitude, longitude, address, speedKmH, batteryLevel } = req.body;
+
+    if (latitude && longitude) {
+      partner.currentLocation = {
+        latitude: Number(latitude),
+        longitude: Number(longitude),
+        address: address || partner.currentLocation?.address || 'Live Delivery Route'
+      };
+    }
+    if (speedKmH !== undefined) partner.speedKmH = Number(speedKmH);
+    if (batteryLevel !== undefined) partner.batteryLevel = Number(batteryLevel);
+
+    await partner.save();
+
+    res.json({
+      success: true,
+      message: 'Live GPS location synchronized',
+      currentLocation: partner.currentLocation,
+      speedKmH: partner.speedKmH,
+      batteryLevel: partner.batteryLevel,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+

@@ -1233,6 +1233,7 @@ exports.createVendorDeliveryPartner = async (req, res) => {
       batteryLevel: partnerDoc.batteryLevel,
       speedKmH: partnerDoc.speedKmH,
       currentLocation: partnerDoc.currentLocation,
+      vendorStoreName: vendor?.storeName || '',
     };
 
     res.status(201).json({
@@ -1247,12 +1248,39 @@ exports.createVendorDeliveryPartner = async (req, res) => {
 
 exports.updateVendorDeliveryPartner = async (req, res) => {
   try {
+    const vendor = await resolveVendor(req);
+    if (!vendor) {
+      return res.status(401).json({ success: false, message: 'Vendor authentication required' });
+    }
+
     const { id } = req.params;
     const { status, phone, vehicleType, vehicleNumber, zone } = req.body;
     const DeliveryPartner = require('../models/DeliveryPartner');
 
-    if (phone) {
-      await User.findByIdAndUpdate(id, { phone: phone.trim() });
+    // Strict multi-vendor verification: Only the owner vendor can update this delivery boy!
+    const partnerUser = await User.findById(id);
+    const partnerDoc = await DeliveryPartner.findOne({
+      $or: [{ userId: id }, { _id: mongoose.Types.ObjectId.isValid(id) ? id : null }]
+    });
+
+    if (!partnerUser && !partnerDoc) {
+      return res.status(404).json({ success: false, message: 'Delivery partner not found' });
+    }
+
+    const isOwner =
+      (partnerUser && partnerUser.createdVendorId && partnerUser.createdVendorId.toString() === vendor._id.toString()) ||
+      (partnerDoc && partnerDoc.vendorId && partnerDoc.vendorId.toString() === vendor._id.toString()) ||
+      (partnerDoc && partnerDoc.vendorStoreName && partnerDoc.vendorStoreName === vendor.storeName);
+
+    if (!isOwner) {
+      return res.status(403).json({
+        success: false,
+        message: 'Aap sirf apne store ke banaye hue delivery boy ko update kar sakte hain, kisi dusre vendor ke delivery boy ko nahi.'
+      });
+    }
+
+    if (phone && partnerUser) {
+      await User.findByIdAndUpdate(partnerUser._id, { phone: phone.trim() });
     }
 
     const dpUpdate = {};
@@ -1261,7 +1289,11 @@ exports.updateVendorDeliveryPartner = async (req, res) => {
     if (vehicleNumber) dpUpdate.vehicleNumber = vehicleNumber;
     if (zone) dpUpdate.currentZone = zone;
 
-    const updatedDp = await DeliveryPartner.findOneAndUpdate({ userId: id }, dpUpdate, { new: true });
+    const updatedDp = await DeliveryPartner.findOneAndUpdate(
+      { $or: [{ userId: id }, { _id: mongoose.Types.ObjectId.isValid(id) ? id : null }] },
+      dpUpdate,
+      { new: true }
+    );
 
     res.json({ success: true, message: 'Delivery partner details updated successfully!', deliveryPartner: updatedDp });
   } catch (error) {
@@ -1271,10 +1303,42 @@ exports.updateVendorDeliveryPartner = async (req, res) => {
 
 exports.deleteVendorDeliveryPartner = async (req, res) => {
   try {
+    const vendor = await resolveVendor(req);
+    if (!vendor) {
+      return res.status(401).json({ success: false, message: 'Vendor authentication required' });
+    }
+
     const { id } = req.params;
     const DeliveryPartner = require('../models/DeliveryPartner');
-    await User.findByIdAndDelete(id);
-    await DeliveryPartner.findOneAndDelete({ userId: id });
+
+    // Strict multi-vendor verification: Only the owner vendor can delete this delivery boy!
+    const partnerUser = await User.findById(id);
+    const partnerDoc = await DeliveryPartner.findOne({
+      $or: [{ userId: id }, { _id: mongoose.Types.ObjectId.isValid(id) ? id : null }]
+    });
+
+    if (!partnerUser && !partnerDoc) {
+      return res.status(404).json({ success: false, message: 'Delivery partner not found' });
+    }
+
+    const isOwner =
+      (partnerUser && partnerUser.createdVendorId && partnerUser.createdVendorId.toString() === vendor._id.toString()) ||
+      (partnerDoc && partnerDoc.vendorId && partnerDoc.vendorId.toString() === vendor._id.toString()) ||
+      (partnerDoc && partnerDoc.vendorStoreName && partnerDoc.vendorStoreName === vendor.storeName);
+
+    if (!isOwner) {
+      return res.status(403).json({
+        success: false,
+        message: 'Aap sirf apne store ke delivery boy ko delete kar sakte hain, kisi dusre vendor ke delivery boy ko nahi.'
+      });
+    }
+
+    if (partnerUser) {
+      await User.findByIdAndDelete(partnerUser._id);
+    }
+    if (partnerDoc) {
+      await DeliveryPartner.findByIdAndDelete(partnerDoc._id);
+    }
 
     res.json({ success: true, message: 'Delivery partner removed successfully' });
   } catch (error) {
@@ -1340,6 +1404,19 @@ exports.assignOrderDeliveryPartner = async (req, res) => {
     if (!partnerDoc) {
       partnerDoc = await DeliveryPartner.findOne({
         $or: [{ userId: partnerUser._id }, { email: partnerUser.email }]
+      });
+    }
+
+    // Strict multi-vendor verification: Only assign to riders created by this vendor!
+    const isRiderOwner =
+      (partnerUser && partnerUser.createdVendorId && partnerUser.createdVendorId.toString() === vendor?._id?.toString()) ||
+      (partnerDoc && partnerDoc.vendorId && partnerDoc.vendorId.toString() === vendor?._id?.toString()) ||
+      (partnerDoc && partnerDoc.vendorStoreName && partnerDoc.vendorStoreName === vendor?.storeName);
+
+    if (!isRiderOwner) {
+      return res.status(403).json({
+        success: false,
+        message: 'Aap sirf apne store ke delivery boy ko hi order assign kar sakte hain, kisi dusre vendor ke delivery boy ko nahi.'
       });
     }
 

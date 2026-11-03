@@ -18,6 +18,7 @@ const {
   submitCodDeposit,
   emergencyAlert,
   updateProfile,
+  updateLiveLocation,
 } = require('../controllers/deliveryController');
 
 // All delivery partner routes use resilient authentication
@@ -26,6 +27,7 @@ router.use(protectDelivery);
 // 1. Dashboard & Profile
 router.get('/dashboard', getDashboard);
 router.put('/profile', updateProfile);
+router.put('/location', updateLiveLocation);
 router.put('/availability', toggleAvailability);
 router.put('/attendance', toggleAttendance);
 
