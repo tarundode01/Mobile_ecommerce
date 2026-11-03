@@ -1404,19 +1404,70 @@ router.delete('/delivery-partners/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const DeliveryPartner = require('../models/DeliveryPartner');
-    await User.findByIdAndDelete(id);
-    await DeliveryPartner.findOneAndDelete({ userId: id });
+    const Order = require('../models/Order');
+
+    // 1. Resolve DeliveryPartner document & User account
+    let partner = null;
+    let partnerUser = null;
+
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      partner = await DeliveryPartner.findById(id);
+      partnerUser = await User.findById(id);
+    }
+
+    if (!partner && partnerUser) {
+      partner = await DeliveryPartner.findOne({
+        $or: [{ userId: partnerUser._id }, { email: partnerUser.email }]
+      });
+    }
+
+    if (partner && !partnerUser && partner.userId) {
+      partnerUser = await User.findById(partner.userId);
+    }
+    if (!partnerUser && partner?.email) {
+      partnerUser = await User.findOne({ email: partner.email });
+    }
+
+    const userIds = [partnerUser?._id, partner?.userId, (mongoose.Types.ObjectId.isValid(id) ? id : null)].filter(Boolean);
+    const partnerIds = [partner?._id, (mongoose.Types.ObjectId.isValid(id) ? id : null)].filter(Boolean);
+    const emails = [partnerUser?.email, partner?.email].filter(Boolean);
+
+    // 2. Permanently delete both documents from MongoDB Atlas
+    const userDelRes = await User.deleteMany({
+      $or: [
+        { _id: { $in: userIds } },
+        { email: { $in: emails } }
+      ]
+    });
+
+    const dpDelRes = await DeliveryPartner.deleteMany({
+      $or: [
+        { _id: { $in: partnerIds } },
+        { userId: { $in: userIds } },
+        { email: { $in: emails } }
+      ]
+    });
+
+    // 3. Clear active assignments on pending orders
+    await Order.updateMany(
+      { 'deliveryPartner.partnerId': { $in: userIds }, orderStatus: { $in: ['placed', 'confirmed'] } },
+      { $unset: { 'deliveryPartner.partnerId': 1 }, $set: { 'deliveryPartner.status': 'assigned' } }
+    );
 
     operationalState.auditLogs.unshift({
       timestamp: new Date().toLocaleTimeString(),
       user: 'admin@balaji.com',
-      action: `Fleet Logistics: Removed Delivery Partner ${id}`,
-      ip: '127.0.0.1',
+      action: `Fleet Logistics: Permanently deleted Delivery Partner (${partner?.name || partnerUser?.name || id}) and login credentials from Atlas`,
+      ip: req.ip || '127.0.0.1',
       level: 'WARN',
     });
 
-    res.json({ success: true, message: 'Delivery Partner removed from fleet' });
+    res.json({
+      success: true,
+      message: `Delivery partner account and login credentials permanently deleted from database. (Users removed: ${userDelRes.deletedCount}, Profiles removed: ${dpDelRes.deletedCount})`
+    });
   } catch (err) {
+    console.error('Admin delete delivery partner error:', err);
     res.status(500).json({ success: false, message: err.message });
   }
 });
