@@ -9,3 +9,4 @@ router.delete('/item/:id', protect, wishlistController.removeFromWishlist);
 router.delete('/', protect, wishlistController.clearWishlist);
 
 module.exports = router;
+

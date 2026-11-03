@@ -620,7 +620,15 @@ exports.addVendorProduct = async (req, res) => {
       });
     }
     if (!catObj) {
-      catObj = await CategoryModel.findOne({ slug: 'fashion' }) || await CategoryModel.findOne();
+      catObj = (await CategoryModel.findOne({ slug: 'fashion' })) || (await CategoryModel.findOne());
+      if (!catObj) {
+        catObj = await CategoryModel.create({
+          name: 'Fashion',
+          slug: 'fashion',
+          icon: '👗',
+          isActive: true
+        });
+      }
     }
 
     const slug = title.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now().toString().slice(-4);
@@ -633,15 +641,20 @@ exports.addVendorProduct = async (req, res) => {
       ? images
       : [image || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500'];
 
+    const rawTags = Array.isArray(tags)
+      ? tags
+      : (typeof tags === 'string' ? tags.split(',') : []);
+
     const categoryTag = catObj?.slug || catInput.toLowerCase();
     const cleanTags = [...new Set([
-      ...(tags || []),
+      ...rawTags.map(t => typeof t === 'string' ? t.toLowerCase().trim() : t),
       catInput.toLowerCase(),
       categoryTag,
       catObj?.name?.toLowerCase(),
       'marketplace',
       'trending',
-      'new_arrival'
+      'new_arrival',
+      'bestseller'
     ])].filter(Boolean);
 
     const newProduct = await Product.create({
@@ -649,7 +662,7 @@ exports.addVendorProduct = async (req, res) => {
       slug,
       sku: sku?.trim() || 'SKU-' + Date.now().toString().slice(-6),
       vendorId: vendor._id,
-      category: catObj ? catObj._id : undefined,
+      category: catObj._id,
       subcategory: catObj?.name || catInput,
       brand: brand?.trim() || vendor.storeName,
       price: pVal,
