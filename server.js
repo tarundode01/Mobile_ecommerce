@@ -12,6 +12,7 @@ const orderRoutes = require('./routes/orderRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const vendorRoutes = require('./routes/vendorRoutes');
 const deliveryRoutes = require('./routes/deliveryRoutes');
+const wishlistRoutes = require('./routes/wishlistRoutes');
 
 // Connect to MongoDB Atlas
 connectDB();
@@ -30,6 +31,7 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/vendor', vendorRoutes);
 app.use('/api/delivery', deliveryRoutes);
+app.use('/api/wishlist', wishlistRoutes);
 
 // Root Health & Telemetry Status
 app.get('/', (req, res) => {

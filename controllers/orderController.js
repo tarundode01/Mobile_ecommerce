@@ -65,12 +65,14 @@ exports.createOrder = async (req, res) => {
       trackingId: `TRK-${Date.now().toString().slice(-6)}`,
     };
 
-    // User fallback
-    let orderUserId = req.user ? req.user._id : undefined;
-    if (!orderUserId) {
-      const fallbackUser = await User.findOne({ role: 'customer' }) || await User.findOne();
-      orderUserId = fallbackUser ? fallbackUser._id : undefined;
+    // SaaS Multi-User Isolation: Order MUST be linked to the authenticated user
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({
+        success: false,
+        message: 'Order place karne ke liye login anivarya hai. Please login first.'
+      });
     }
+    const orderUserId = req.user._id;
 
     // Generate unique order number
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
