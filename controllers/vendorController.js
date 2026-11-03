@@ -574,14 +574,46 @@ exports.addVendorProduct = async (req, res) => {
 
     const CategoryModel = require('../models/Category');
     let catObj = null;
+    const catInput = (category && typeof category === 'string') ? category.trim() : 'Fashion';
+
     if (category && mongoose.Types.ObjectId.isValid(category)) {
       catObj = await CategoryModel.findById(category);
     }
-    if (!catObj && category) {
-      catObj = await CategoryModel.findOne({ name: new RegExp('^' + category + '$', 'i') });
+    if (!catObj && catInput) {
+      // 1. Exact match on slug or name
+      catObj = await CategoryModel.findOne({
+        $or: [
+          { slug: catInput.toLowerCase() },
+          { name: new RegExp('^' + catInput + '$', 'i') }
+        ]
+      });
+      // 2. Partial match (e.g. "Fashion" matches "Fashion & Wear", "Electronics" matches "Audio & Gadgets", etc.)
+      if (!catObj) {
+        catObj = await CategoryModel.findOne({
+          $or: [
+            { name: new RegExp(catInput, 'i') },
+            { slug: new RegExp(catInput.toLowerCase(), 'i') }
+          ]
+        });
+      }
+    }
+    // 3. Fallback: If not found, create it specifically with this category name and proper slug!
+    if (!catObj && catInput) {
+      const slug = catInput.toLowerCase().replace(/[^a-z0-9]/g, '-');
+      const icon = catInput.toLowerCase().includes('fashion') ? '👗' :
+                   catInput.toLowerCase().includes('electr') ? '📱' :
+                   catInput.toLowerCase().includes('jewel') ? '💎' :
+                   catInput.toLowerCase().includes('home') ? '🏠' :
+                   catInput.toLowerCase().includes('groc') ? '🥬' : '🛍️';
+      catObj = await CategoryModel.create({
+        name: catInput,
+        slug,
+        icon,
+        isActive: true,
+      });
     }
     if (!catObj) {
-      catObj = await CategoryModel.findOne() || await CategoryModel.create({ name: 'General', slug: 'general', icon: '📦' });
+      catObj = await CategoryModel.findOne({ slug: 'fashion' }) || await CategoryModel.findOne();
     }
 
     const slug = title.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now().toString().slice(-4);
@@ -594,12 +626,24 @@ exports.addVendorProduct = async (req, res) => {
       ? images
       : [image || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500'];
 
+    const categoryTag = catObj?.slug || catInput.toLowerCase();
+    const cleanTags = [...new Set([
+      ...(tags || []),
+      catInput.toLowerCase(),
+      categoryTag,
+      catObj?.name?.toLowerCase(),
+      'marketplace',
+      'trending',
+      'new_arrival'
+    ])].filter(Boolean);
+
     const newProduct = await Product.create({
       title: title.trim(),
       slug,
       sku: sku?.trim() || 'SKU-' + Date.now().toString().slice(-6),
       vendorId: vendor._id,
-      category: catObj._id,
+      category: catObj ? catObj._id : undefined,
+      subcategory: catObj?.name || catInput,
       brand: brand?.trim() || vendor.storeName,
       price: pVal,
       salePrice: sVal,
@@ -608,9 +652,11 @@ exports.addVendorProduct = async (req, res) => {
       isOutOfStock: stockVal <= 0,
       description: description?.trim() || `${title} from ${vendor.storeName}`,
       images: imgList,
-      tags: tags || ['trending', 'new_arrival'],
+      tags: cleanTags,
       specifications: specifications || [
         { key: 'Brand', value: brand?.trim() || vendor.storeName },
+        { key: 'Category', value: catObj?.name || catInput },
+        { key: 'Store', value: vendor.storeName },
         { key: 'Condition', value: '100% Brand New' }
       ],
       deliveryInfo: deliveryInfo || {

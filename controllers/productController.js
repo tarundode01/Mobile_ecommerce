@@ -11,26 +11,28 @@ exports.getHomeFeed = async (req, res) => {
     const [banners, categories, trendingProducts, bestsellers, newArrivals, flashDeals, vendors] =
       await Promise.all([
         Banner.find({ isActive: true }).sort({ order: 1 }).limit(5),
-        Category.find({ isActive: true }).sort({ order: 1 }).limit(10),
-        Product.find({ isPublished: true, tags: 'trending' })
+        Category.find({ isActive: true }).sort({ order: 1 }).limit(12),
+        Product.find({ isPublished: true, tags: { $in: ['trending', 'marketplace', 'fashion'] } })
+          .sort({ createdAt: -1 })
           .populate('category', 'name slug icon')
           .populate('vendorId', 'storeName rating isVerified')
-          .limit(8),
+          .limit(20),
         Product.find({ isPublished: true, tags: 'bestseller' })
+          .sort({ createdAt: -1 })
           .populate('category', 'name slug icon')
           .populate('vendorId', 'storeName rating isVerified')
-          .limit(8),
+          .limit(15),
         Product.find({ isPublished: true })
           .sort({ createdAt: -1 })
           .populate('category', 'name slug icon')
           .populate('vendorId', 'storeName rating isVerified')
-          .limit(8),
-        Product.find({ isPublished: true, discountPercentage: { $gte: 20 } })
+          .limit(24),
+        Product.find({ isPublished: true, discountPercentage: { $gte: 10 } })
           .sort({ discountPercentage: -1 })
           .populate('category', 'name slug icon')
           .populate('vendorId', 'storeName rating isVerified')
-          .limit(8),
-        Vendor.find({ status: 'active', isVerified: true }).limit(5)
+          .limit(15),
+        Vendor.find({ status: 'active', isVerified: true }).limit(10)
       ]);
 
     res.json({
@@ -56,6 +58,7 @@ exports.getHomeFeed = async (req, res) => {
 // @access  Public
 exports.getProducts = async (req, res) => {
   try {
+    const mongoose = require('mongoose');
     const {
       search,
       category,
@@ -65,26 +68,83 @@ exports.getProducts = async (req, res) => {
       minRating,
       sort,
       tag,
+      vendorId,
+      vendor,
       page = 1,
-      limit = 12
+      limit = 50
     } = req.query;
 
     const query = { isPublished: true };
 
-    // Search keyword
-    if (search) {
-      query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { brand: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
-      ];
+    // 1. Vendor Filter
+    const targetVendor = vendorId || vendor;
+    if (targetVendor && mongoose.Types.ObjectId.isValid(targetVendor)) {
+      query.vendorId = targetVendor;
     }
 
-    // Category filter
-    if (category && category !== 'all') {
-      const catDoc = await Category.findOne({ slug: category });
+    // 2. Comprehensive Search across Title, Brand, Description, Subcategory, Tags, and Category Name!
+    if (search && search.trim()) {
+      const s = search.trim();
+      const searchRegex = new RegExp(s, 'i');
+
+      // Find any categories matching the search term (e.g. "fashion" -> "Fashion & Wear")
+      const matchingCats = await Category.find({
+        $or: [
+          { name: searchRegex },
+          { slug: searchRegex }
+        ]
+      }).select('_id');
+      const catIds = matchingCats.map(c => c._id);
+
+      const searchConditions = [
+        { title: searchRegex },
+        { brand: searchRegex },
+        { description: searchRegex },
+        { subcategory: searchRegex },
+        { tags: searchRegex }
+      ];
+      if (catIds.length > 0) {
+        searchConditions.push({ category: { $in: catIds } });
+      }
+
+      query.$or = searchConditions;
+    }
+
+    // 3. Category Filter (Matches by ObjectId, slug, exact name, or partial name!)
+    if (category && category !== 'all' && category !== 'All') {
+      let catDoc = null;
+      if (mongoose.Types.ObjectId.isValid(category)) {
+        catDoc = await Category.findById(category);
+      }
+      if (!catDoc) {
+        const cleanCat = category.trim();
+        catDoc = await Category.findOne({
+          $or: [
+            { slug: cleanCat.toLowerCase() },
+            { name: new RegExp('^' + cleanCat + '$', 'i') },
+            { name: new RegExp(cleanCat, 'i') },
+            { slug: new RegExp(cleanCat.toLowerCase(), 'i') }
+          ]
+        });
+      }
+
+      const catConditions = [];
       if (catDoc) {
-        query.category = catDoc._id;
+        catConditions.push({ category: catDoc._id });
+        catConditions.push({ subcategory: new RegExp(catDoc.name, 'i') });
+        catConditions.push({ tags: catDoc.slug });
+      } else {
+        const catRegex = new RegExp(category.trim(), 'i');
+        catConditions.push({ subcategory: catRegex });
+        catConditions.push({ tags: catRegex });
+        catConditions.push({ title: catRegex });
+      }
+
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: catConditions }];
+        delete query.$or;
+      } else {
+        query.$or = catConditions;
       }
     }
 
