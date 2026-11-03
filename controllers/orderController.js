@@ -212,3 +212,72 @@ exports.cancelOrder = async (req, res) => {
   }
 };
 
+// @desc    Customer confirms order delivery / receipt
+// @route   PUT /api/orders/:id/complete
+// @access  Private
+exports.customerConfirmDelivery = async (req, res) => {
+  try {
+    const DeliveryPartner = require('../models/DeliveryPartner');
+    let order = null;
+    if (req.user && req.user.role === 'customer') {
+      order = await Order.findOne({ _id: req.params.id, user: req.user._id });
+    }
+    if (!order) {
+      order = await Order.findById(req.params.id);
+    }
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    if (order.orderStatus === 'delivered') {
+      return res.json({ success: true, message: 'Order is already marked as delivered.', order });
+    }
+
+    order.orderStatus = 'delivered';
+    if (!order.deliveryPartner) order.deliveryPartner = {};
+    order.deliveryPartner.status = 'delivered';
+    order.deliveryPartner.deliveredAt = new Date();
+
+    if (order.payment?.method === 'COD') {
+      order.payment.status = 'Paid';
+      order.deliveryPartner.codCollected = true;
+      order.deliveryPartner.codAmountCollected = order.pricing?.totalAmount || 0;
+    }
+
+    order.timeline.push({
+      status: 'Delivered & Confirmed by Customer ✅',
+      timestamp: new Date(),
+      note: 'Customer confirmed order receipt. Marked as completed across Admin, Vendor, and Delivery Boy.'
+    });
+
+    await order.save();
+
+    // Update DeliveryPartner stats
+    const partnerId = order.deliveryPartner?.partnerId;
+    if (partnerId) {
+      const partnerDoc = await DeliveryPartner.findOne({
+        $or: [{ userId: partnerId }, { _id: partnerId }]
+      });
+      if (partnerDoc) {
+        partnerDoc.todayDeliveriesCount = (partnerDoc.todayDeliveriesCount || 0) + 1;
+        partnerDoc.todayEarnings = (partnerDoc.todayEarnings || 0) + (order.deliveryPartner.deliveryFeeEarned || 75);
+        partnerDoc.walletBalance = (partnerDoc.walletBalance || 0) + (order.deliveryPartner.deliveryFeeEarned || 75);
+        if (partnerDoc.pendingDeliveriesCount > 0) {
+          partnerDoc.pendingDeliveriesCount -= 1;
+        }
+        partnerDoc.isBusy = partnerDoc.pendingDeliveriesCount > 0;
+        await partnerDoc.save();
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Order delivery confirmed! Thank you for shopping with us.',
+      order
+    });
+  } catch (error) {
+    console.error('customerConfirmDelivery error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+

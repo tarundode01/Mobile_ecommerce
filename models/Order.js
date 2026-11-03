@@ -54,7 +54,9 @@ const OrderSchema = new mongoose.Schema(
       city: { type: String, required: true },
       state: { type: String, required: true },
       pinCode: { type: String, required: true },
-      country: { type: String, default: 'India' }
+      country: { type: String, default: 'India' },
+      latitude: { type: Number, default: 22.7350 },
+      longitude: { type: Number, default: 75.8720 }
     },
     payment: {
       method: {
@@ -84,6 +86,20 @@ const OrderSchema = new mongoose.Schema(
       liveLocation: {
         latitude: Number,
         longitude: Number
+      },
+      sourceLocation: {
+        storeName: { type: String, default: 'Vendor Store' },
+        address: { type: String, default: 'Indore, MP' },
+        latitude: { type: Number, default: 22.7196 },
+        longitude: { type: Number, default: 75.8577 },
+        phone: { type: String, default: '+91 98260 11223' }
+      },
+      destinationLocation: {
+        customerName: { type: String, default: 'Valued Customer' },
+        address: { type: String, default: 'Indore, MP' },
+        latitude: { type: Number, default: 22.7350 },
+        longitude: { type: Number, default: 75.8720 },
+        phone: { type: String, default: '+91 98765 43210' }
       },
       status: {
         type: String,

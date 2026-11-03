@@ -1501,16 +1501,47 @@ exports.assignOrderDeliveryPartner = async (req, res) => {
     const baseLat = vendor?.location?.coordinates?.[1] || 22.7196;
     const baseLng = vendor?.location?.coordinates?.[0] || 75.8577;
 
+    const custLat = order.shippingAddress?.latitude || (baseLat + 0.024);
+    const custLng = order.shippingAddress?.longitude || (baseLng + 0.018);
+
+    // Calculate real Haversine distance in km between Vendor and Customer
+    const dLat = (custLat - baseLat) * (Math.PI / 180);
+    const dLng = (custLng - baseLng) * (Math.PI / 180);
+    const haversineA =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(baseLat * (Math.PI / 180)) * Math.cos(custLat * (Math.PI / 180)) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const haversineC = 2 * Math.atan2(Math.sqrt(haversineA), Math.sqrt(1 - haversineA));
+    const calculatedKm = Math.max(1.2, Math.round(6371 * haversineC * 10) / 10);
+
+    const sourceLocation = {
+      storeName: vendor?.storeName || 'Vendor Store',
+      address: vendor?.address?.street ? `${vendor.address.street}, ${vendor.address.city || 'Indore'}` : (typeof vendor?.address === 'string' ? vendor.address : 'Main Market, Indore'),
+      latitude: baseLat,
+      longitude: baseLng,
+      phone: vendor?.businessPhone || vendor?.phone || '+91 98260 11223'
+    };
+
+    const destinationLocation = {
+      customerName: order.shippingAddress?.name || 'Customer',
+      address: `${order.shippingAddress?.street || ''}, ${order.shippingAddress?.city || 'Indore'} ${order.shippingAddress?.pinCode || ''}`.trim(),
+      latitude: custLat,
+      longitude: custLng,
+      phone: order.shippingAddress?.phone || '+91 98765 43210'
+    };
+
     order.deliveryPartner = {
       partnerId: partnerUser._id,
       name: partnerUser.name,
       phone: partnerUser.phone || '+91 98930 12345',
       trackingId,
       liveLocation: partnerDoc?.currentLocation || { latitude: baseLat + 0.005, longitude: baseLng + 0.005 },
+      sourceLocation,
+      destinationLocation,
       status: 'assigned',
       pickupOtp: Math.floor(1000 + Math.random() * 9000).toString(),
       deliveryOtp: Math.floor(1000 + Math.random() * 9000).toString(),
-      distanceKm: 3.2,
+      distanceKm: calculatedKm,
       deliveryFeeEarned: 75,
       deliveryNotes: notes || `Assigned by store ${vendor?.storeName || 'Balaji Partner'}`
     };

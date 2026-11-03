@@ -35,6 +35,20 @@ const getOrCreatePartnerProfile = async (user) => {
   return partner;
 };
 
+// Helper to calculate distance between coordinates
+const calculateKmDistance = (lat1, lon1, lat2, lon2) => {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return 3.2;
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.max(1.1, Math.round(R * c * 10) / 10);
+};
+
 // Helper to build robust MongoDB query for partner's assigned orders
 const buildPartnerOrdersQuery = (user, partner) => {
   const ids = [user?._id, partner?._id, partner?.userId].filter(Boolean);
@@ -43,24 +57,83 @@ const buildPartnerOrdersQuery = (user, partner) => {
     { 'deliveryPartner.partnerId': { $in: ids } },
   ];
 
+  const phones = [user?.phone, partner?.phone].filter(Boolean).map(p => p.replace(/[^0-9]/g, '').slice(-10)).filter(p => p.length >= 10);
+  if (phones.length > 0) {
+    orConditions.push({
+      'deliveryPartner.phone': { $in: phones.map(p => new RegExp(p)) }
+    });
+  }
+
   if (user?.name) {
     orConditions.push({
-      $and: [
-        { 'deliveryPartner.partnerId': { $exists: false } },
-        { 'deliveryPartner.name': new RegExp('^' + user.name.trim() + '$', 'i') }
-      ]
+      'deliveryPartner.name': new RegExp('^' + user.name.trim() + '$', 'i')
     });
   }
   if (partner?.name && partner.name !== user?.name) {
     orConditions.push({
-      $and: [
-        { 'deliveryPartner.partnerId': { $exists: false } },
-        { 'deliveryPartner.name': new RegExp('^' + partner.name.trim() + '$', 'i') }
-      ]
+      'deliveryPartner.name': new RegExp('^' + partner.name.trim() + '$', 'i')
     });
   }
 
   return { $or: orConditions };
+};
+
+// Helper to format/enrich order with full source, destination and live route info
+const enrichOrderWithRoute = (order, partner) => {
+  const o = order.toObject ? order.toObject() : { ...order };
+  const firstVendor = o.items?.[0]?.vendor;
+
+  const baseSourceLat = o.deliveryPartner?.sourceLocation?.latitude || firstVendor?.location?.coordinates?.[1] || 22.7196;
+  const baseSourceLng = o.deliveryPartner?.sourceLocation?.longitude || firstVendor?.location?.coordinates?.[0] || 75.8577;
+  const sourceName = o.deliveryPartner?.sourceLocation?.storeName || firstVendor?.storeName || 'Vendor Store';
+  const sourceAddress = o.deliveryPartner?.sourceLocation?.address ||
+    (typeof firstVendor?.address === 'string' ? firstVendor.address : `${firstVendor?.address?.street || ''}, ${firstVendor?.address?.city || 'Indore'}`) ||
+    'Main Market, Indore';
+  const sourcePhone = o.deliveryPartner?.sourceLocation?.phone || firstVendor?.businessPhone || firstVendor?.phone || '+91 98260 11223';
+
+  const baseDestLat = o.deliveryPartner?.destinationLocation?.latitude || o.shippingAddress?.latitude || (baseSourceLat + 0.024);
+  const baseDestLng = o.deliveryPartner?.destinationLocation?.longitude || o.shippingAddress?.longitude || (baseSourceLng + 0.018);
+  const destName = o.deliveryPartner?.destinationLocation?.customerName || o.shippingAddress?.name || 'Customer';
+  const destAddress = o.deliveryPartner?.destinationLocation?.address ||
+    `${o.shippingAddress?.street || ''}, ${o.shippingAddress?.city || 'Indore'} ${o.shippingAddress?.pinCode || ''}`.trim() ||
+    'Indore, Madhya Pradesh';
+  const destPhone = o.deliveryPartner?.destinationLocation?.phone || o.shippingAddress?.phone || '+91 98765 43210';
+
+  const riderLat = o.deliveryPartner?.liveLocation?.latitude || partner?.currentLocation?.latitude || (baseSourceLat + 0.005);
+  const riderLng = o.deliveryPartner?.liveLocation?.longitude || partner?.currentLocation?.longitude || (baseSourceLng + 0.005);
+
+  const totalDistance = calculateKmDistance(baseSourceLat, baseSourceLng, baseDestLat, baseDestLng);
+  const riderToTargetDistance = (o.deliveryPartner?.status === 'picked_up' || o.deliveryPartner?.status === 'out_for_delivery')
+    ? calculateKmDistance(riderLat, riderLng, baseDestLat, baseDestLng)
+    : calculateKmDistance(riderLat, riderLng, baseSourceLat, baseSourceLng);
+
+  if (!o.deliveryPartner) o.deliveryPartner = {};
+
+  o.deliveryPartner.sourceLocation = {
+    storeName: sourceName,
+    address: sourceAddress,
+    latitude: baseSourceLat,
+    longitude: baseSourceLng,
+    phone: sourcePhone,
+  };
+
+  o.deliveryPartner.destinationLocation = {
+    customerName: destName,
+    address: destAddress,
+    latitude: baseDestLat,
+    longitude: baseDestLng,
+    phone: destPhone,
+  };
+
+  o.deliveryPartner.liveLocation = {
+    latitude: riderLat,
+    longitude: riderLng,
+  };
+
+  o.deliveryPartner.distanceKm = o.deliveryPartner.distanceKm || totalDistance;
+  o.deliveryPartner.riderToTargetDistanceKm = riderToTargetDistance;
+
+  return o;
 };
 
 // @desc    Get Delivery Partner Dashboard Overview
@@ -167,10 +240,12 @@ exports.getOrders = async (req, res) => {
       }
     }
 
+    const enrichedOrders = orders.map((o) => enrichOrderWithRoute(o, partner));
+
     res.json({
       success: true,
-      orders,
-      count: orders.length,
+      orders: enrichedOrders,
+      count: enrichedOrders.length,
     });
   } catch (error) {
     console.error('Delivery getOrders error:', error);
@@ -615,6 +690,27 @@ exports.updateLiveLocation = async (req, res) => {
         longitude: Number(longitude),
         address: address || partner.currentLocation?.address || 'Live Delivery Route'
       };
+
+      // Also sync live location on active orders assigned to this partner so customer and vendor track in real-time
+      const partnerIds = [partner._id, partner.userId, req.user?._id].filter(Boolean);
+      await Order.updateMany(
+        {
+          $or: [
+            { 'deliveryPartner.partnerId': { $in: partnerIds } },
+            { 'deliveryPartner.phone': req.user?.phone || partner.phone },
+            { 'deliveryPartner.name': req.user?.name || partner.name }
+          ],
+          orderStatus: { $in: ['placed', 'confirmed', 'packed', 'shipped', 'out_for_delivery'] }
+        },
+        {
+          $set: {
+            'deliveryPartner.liveLocation': {
+              latitude: Number(latitude),
+              longitude: Number(longitude)
+            }
+          }
+        }
+      );
     }
     if (speedKmH !== undefined) partner.speedKmH = Number(speedKmH);
     if (batteryLevel !== undefined) partner.batteryLevel = Number(batteryLevel);

@@ -7,6 +7,8 @@ router.post('/', protect, orderController.createOrder);
 router.get('/my-orders', protect, orderController.getMyOrders);
 router.get('/:id', protect, orderController.getOrderById);
 router.post('/:id/cancel', protect, orderController.cancelOrder);
+router.put('/:id/complete', protect, orderController.customerConfirmDelivery);
+router.post('/:id/complete', protect, orderController.customerConfirmDelivery);
 
 module.exports = router;
 
