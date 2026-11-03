@@ -159,26 +159,44 @@ exports.getDashboard = async (req, res) => {
     );
     const pendingCount = pendingOrders.length;
 
-    const dynamicTodayEarnings = completedOrders.reduce(
-      (sum, o) => sum + (o.deliveryPartner?.deliveryFeeEarned || 75),
-      0
-    ) + (partner.todayEarnings || 0);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayCompleted = completedOrders.filter((o) => new Date(o.updatedAt || o.createdAt) >= todayStart);
 
-    const dynamicDistance = completedOrders.reduce(
-      (sum, o) => sum + (o.deliveryPartner?.distanceKm || 3.2),
-      0
-    ) + (partner.todayDistanceKm || 0);
+    const calculateOrderFee = (o) => {
+      if (o.deliveryPartner?.deliveryFeeEarned && o.deliveryPartner.deliveryFeeEarned > 0) {
+        return o.deliveryPartner.deliveryFeeEarned;
+      }
+      const dist = o.deliveryPartner?.distanceKm || 3.2;
+      return Math.round(45 + dist * 12);
+    };
 
-    const dynamicCodCashInHand = orders.reduce((sum, o) => {
-      if (
-        (o.payment?.method === 'COD' || o.deliveryPartner?.codCollected) &&
-        (o.deliveryPartner?.status === 'delivered' || o.orderStatus === 'delivered') &&
-        !o.deliveryPartner?.codDeposited
-      ) {
-        return sum + (o.pricing?.totalAmount || o.deliveryPartner?.codAmountCollected || 0);
+    const dynamicTodayEarnings = todayCompleted.reduce((sum, o) => sum + calculateOrderFee(o), 0);
+    const totalLifetimeEarned = completedOrders.reduce((sum, o) => sum + calculateOrderFee(o), 0);
+
+    const totalWithdrawn = (partner.payoutHistory || [])
+      .filter((p) => p.status === 'Completed')
+      .reduce((sum, p) => sum + (p.amount || 0), 0);
+
+    const dynamicWalletBalance = Math.max(0, totalLifetimeEarned - totalWithdrawn);
+
+    const totalCodDeposited = (partner.codDeposits || [])
+      .filter((d) => d.status === 'Verified')
+      .reduce((sum, d) => sum + (d.amount || 0), 0);
+
+    const totalCodCollected = completedOrders.reduce((sum, o) => {
+      const isCod = o.payment?.method === 'COD' || o.paymentMethod === 'COD';
+      if (isCod) {
+        return sum + (o.pricing?.totalAmount || o.totalAmount || 0);
       }
       return sum;
-    }, partner.cashInHand || 0);
+    }, 0);
+
+    const dynamicCodCashInHand = Math.max(0, totalCodCollected - totalCodDeposited);
+
+    const dynamicDistanceToday = Math.round(
+      todayCompleted.reduce((sum, o) => sum + (o.deliveryPartner?.distanceKm || 3.2), 0) * 10
+    ) / 10;
 
     const summary = {
       assignedOrders: totalAssigned,
@@ -186,8 +204,8 @@ exports.getDashboard = async (req, res) => {
       pendingDeliveries: pendingCount,
       todayEarnings: dynamicTodayEarnings,
       averageRating: partner.rating || 5.0,
-      todayDistanceKm: Math.round(dynamicDistance * 10) / 10,
-      walletBalance: partner.walletBalance || dynamicTodayEarnings,
+      todayDistanceKm: dynamicDistanceToday,
+      walletBalance: dynamicWalletBalance,
       cashInHand: dynamicCodCashInHand,
       isOnline: partner.isOnline,
       isBusy: pendingCount > 0,
@@ -654,13 +672,27 @@ exports.emergencyAlert = async (req, res) => {
 exports.updateProfile = async (req, res) => {
   try {
     const partner = await getOrCreatePartnerProfile(req.user);
-    const { vehicleType, vehicleNumber, phone, drivingLicense, currentZone, bankDetails, emergencyContact } = req.body;
+    const { name, vehicleType, vehicleNumber, phone, drivingLicense, rcNumber, currentZone, bankDetails, emergencyContact } = req.body;
 
+    if (name && name.trim()) {
+      partner.name = name.trim();
+      if (req.user) {
+        req.user.name = name.trim();
+        await req.user.save();
+      }
+    }
+    if (phone && phone.trim()) {
+      partner.phone = phone.trim();
+      if (req.user) {
+        req.user.phone = phone.trim();
+        await req.user.save();
+      }
+    }
     if (vehicleType) partner.vehicleType = vehicleType;
-    if (vehicleNumber) partner.vehicleNumber = vehicleNumber;
-    if (phone) partner.phone = phone;
-    if (drivingLicense) partner.drivingLicense = drivingLicense;
-    if (currentZone) partner.currentZone = currentZone;
+    if (vehicleNumber) partner.vehicleNumber = vehicleNumber.trim();
+    if (drivingLicense) partner.drivingLicense = drivingLicense.trim();
+    if (rcNumber) partner.rcNumber = rcNumber.trim();
+    if (currentZone) partner.currentZone = currentZone.trim();
     if (bankDetails) partner.bankDetails = { ...partner.bankDetails, ...bankDetails };
     if (emergencyContact) partner.emergencyContact = { ...partner.emergencyContact, ...emergencyContact };
 
